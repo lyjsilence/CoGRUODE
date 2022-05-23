@@ -43,6 +43,4 @@ Train the Physionet experiment
 python3 Physionet.py --model_name CoGRUODE-HV --num_exp 5 --n_dim 20 --batch_size 500 --dt 0.1
 python3 Physionet.py --model_name CoGRUODE-HM --num_exp 5 --n_dim 20 --batch_size 500 --dt 0.1
 ```
-### Results 
-After training, you can run "concat_results.py" to get the all experiment results.  
-All pre-trained models and experiment results can be accessed in *results* .
+
