@@ -1,7 +1,7 @@
 # CoGRUODE
 Learning Multivariate Asynchronous Time Series for High-Frequency Option Price Forecasting
 
-![Image text](https://github.com/lyjsilence/CoGRUODE/tree/main/img/eval_example.png)
+![Image text](https://github.com/lyjsilence/CoGRUODE/blob/main/img/eval_example.png)
 
 ### Requirements
 Python == 3.8.   
