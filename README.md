@@ -14,7 +14,7 @@ The data is stored in the folder "data", including 3-min transaction records for
 
 Training
 ```
-python3 TCH.py --dataset Call --model_name RFN --num_exp 5 
+python3 TCH.py --dataset Call --model_name CoGRUODE --num_exp 5 
 ```
 
 The CoGRUODE in model_name can be replaced by one of the baselines: GRUODE, mGRUODE, ODELSTM, ODERNN, GRU-D, GRU-delta-t.
