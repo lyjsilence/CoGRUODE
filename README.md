@@ -17,7 +17,7 @@ Training
 python3 TCH.py --dataset Call --model_name CoGRUODE --num_exp 5 
 ```
 
-The CoGRUODE in model_name can be replaced by one of the baselines: GRUODE, mGRUODE, ODELSTM, ODERNN, GRU-D, GRU-delta-t.
+The CoGRUODE in model_name can be replaced by one of the baselines: GRUODE, mGRUODE, ODELSTM, ODERNN, GRU-D, GRU-delta-t, and Neural-CDE.
 
 The dataset can be selected from the Call option (Call) or Put option (Put).
 
