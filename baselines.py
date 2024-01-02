@@ -83,7 +83,6 @@ class GRU_ODE(nn.Module):
         self.hidden_size = args.hidden_size
         self.solver = args.solver
         self.dropout = args.dropout
-        self.task = args.task
         self.device = device
         self.minimal = args.minimal
 
@@ -113,16 +112,8 @@ class GRU_ODE(nn.Module):
                 nn.init.xavier_uniform_(param.data)
 
     def ode_step(self, h, delta_t):
-        if self.solver == 'euler':
-            dh = self.gru_c(None, h)
-            h = h + delta_t * dh
-        else:
-            if self.solver == 'euler':
-                dh = self.gru_c(None, h)
-                h = h + delta_t * dh
-            else:
-                solution = odeint(self.gru_c, h, torch.tensor([0, delta_t]).to(h.device), method=self.solver)
-                h = solution[1, :, :]
+        solution = odeint(self.gru_c, h, torch.tensor([0, delta_t]).to(h.device), method=self.solver)
+        h = solution[1, :, :]
 
         return h
 
@@ -136,36 +127,10 @@ class GRU_ODE(nn.Module):
 
         return loss_mse, loss_mae, loss_mape, total_M_obs
 
-    def append_classify_res(self, pred_list, true_list, Y_obs, p_obs):
-        Y_obs = Y_obs[:, 1:]
-        index = [Y_obs != 0]
-        Y_loss, p_loss = Y_obs[index], p_obs[index]
-        pred_list.append(p_loss)
-        true_list.append(Y_loss)
-
-        return pred_list, true_list
-
-    def compute_classfy_loss(self, pred_list, true_list):
-        pred_list = torch.stack(list(chain(*pred_list)))
-        true_list = torch.stack(list(chain(*true_list)))
-
-        criteria = torch.nn.BCEWithLogitsLoss()
-        true_list = true_list * 0.5 + 0.5
-        loss_ce = criteria(pred_list, true_list)
-
-        sigmoid = nn.Sigmoid()
-        pred_list = sigmoid(pred_list)
-
-        loss_acc = utils.acc(true_list.cpu().detach().numpy(), pred_list.cpu().detach().numpy())
-        loss_auc, loss_pr = utils.auc_pr(true_list.cpu().detach().numpy(), pred_list.cpu().detach().numpy())
-
-        return loss_ce, loss_acc, loss_auc, loss_pr
-
-    def forward(self,  obs_times, event_pt, sample_idx, X, M, batch_idx, dt, Y=None, return_path=False):
+    def forward(self,  obs_times, event_pt, sample_idx, X, M, batch_idx, dt, return_path=False):
 
         current_time = 0.0
         loss_mse, loss_mae, loss_mape = torch.as_tensor(0.0), torch.as_tensor(0.0), torch.as_tensor(0.0)
-        pred_list, true_list = [], []
         total_M_obs = 0
 
         if return_path:
@@ -194,26 +159,17 @@ class GRU_ODE(nn.Module):
             p = self.p_model(h)
 
             if current_time > 0:
-                if self.task == 'regression':
-                    loss_mse, loss_mae, loss_mape, total_M_obs \
-                        = self.compute_reg_loss(loss_mse, loss_mae, loss_mape, total_M_obs, X_obs[:, :, 0], p[i_obs], M_obs)
-                elif self.task == 'classification':
-                    Y_obs = Y[start:end]
-                    pred_list, true_list = self.append_classify_res(pred_list, true_list, Y_obs, p[i_obs])
+                loss_mse, loss_mae, loss_mape, total_M_obs \
+                    = self.compute_loss(loss_mse, loss_mae, loss_mape, total_M_obs, X_obs[:, :, 0], p[i_obs], M_obs)
 
             # Using GRUObservationCell to update h. Also updating p and loss
             h = self.gru_obs(h, X_obs, i_obs)
 
-        if self.task == 'classification':
-            loss_ce, loss_acc, loss_auc, loss_pr = self.compute_classfy_loss(pred_list, true_list)
-
         if return_path:
             return np.array(path['path_t']), torch.stack(path['path_p'])
         else:
-            if self.task == 'regression':
-                return loss_mse / total_M_obs, loss_mae / total_M_obs, loss_mape / total_M_obs
-            elif self.task == 'classification':
-                return loss_ce, loss_acc, loss_auc, loss_pr
+            return loss_mse / total_M_obs, loss_mae / total_M_obs, loss_mape / total_M_obs
+
 
 '''
 GRU delta-t
@@ -230,7 +186,6 @@ class GRU_delta_t(nn.Module):
         self.hidden_size = args.hidden_size
         self.solver = args.solver
         self.dropout = args.dropout
-        self.task = args.task
         self.device = device
 
         self.p_model = nn.Sequential(
@@ -259,37 +214,13 @@ class GRU_delta_t(nn.Module):
 
         return loss_mse, loss_mae, loss_mape, total_M_obs
 
-    def append_classify_res(self, pred_list, true_list, Y_obs, p_obs):
-        Y_obs = Y_obs[:, 1:]
-        index = [Y_obs != 0]
-        Y_loss, p_loss = Y_obs[index], p_obs[index]
-        pred_list.append(p_loss)
-        true_list.append(Y_loss)
 
-        return pred_list, true_list
-
-    def compute_classfy_loss(self, pred_list, true_list):
-        pred_list = torch.stack(list(chain(*pred_list)))
-        true_list = torch.stack(list(chain(*true_list)))
-
-        criteria = torch.nn.BCEWithLogitsLoss()
-        true_list = true_list * 0.5 + 0.5
-        loss_ce = criteria(pred_list, true_list)
-
-        sigmoid = nn.Sigmoid()
-        pred_list = sigmoid(pred_list)
-
-        loss_acc = utils.acc(true_list.cpu().detach().numpy(), pred_list.cpu().detach().numpy())
-        loss_auc, loss_pr = utils.auc_pr(true_list.cpu().detach().numpy(), pred_list.cpu().detach().numpy())
-
-        return loss_ce, loss_acc, loss_auc, loss_pr
-
-    def forward(self, obs_times, event_pt, sample_idx, X, M, batch_idx, dt, Y=None, return_path=False):
+    def forward(self, obs_times, event_pt, sample_idx, X, M, batch_idx, dt, return_path=False):
 
         current_time = 0.0
         loss_mse, loss_mae, loss_mape = torch.as_tensor(0.0), torch.as_tensor(0.0), torch.as_tensor(0.0)
         pred_list, true_list = [], []
-        loss_CE = torch.as_tensor(0.0)
+
         total_M_obs = 0
 
         if return_path:
@@ -315,13 +246,8 @@ class GRU_delta_t(nn.Module):
 
             p = self.p_model(h)
             if current_time > 0:
-                if self.task == 'regression':
-                    loss_mse, loss_mae, loss_mape, total_M_obs \
-                        = self.compute_reg_loss(loss_mse, loss_mae, loss_mape, total_M_obs, X_obs[:, :, 0], p[i_obs], M_obs)
-                elif self.task == 'classification':
-                    Y_obs = Y[start:end]
-                    pred_list, true_list = self.append_classify_res(pred_list, true_list, Y_obs, p[i_obs])
-
+                loss_mse, loss_mae, loss_mape, total_M_obs \
+                    = self.compute_loss(loss_mse, loss_mae, loss_mape, total_M_obs, X_obs[:, :, 0], p[i_obs], M_obs)
 
             X_obs = X_obs.reshape(X_obs.shape[0], -1)
             input = torch.cat([X_obs, (current_time - last_t[i_obs]).unsqueeze(1).to(self.device)], dim=-1)
@@ -332,17 +258,100 @@ class GRU_delta_t(nn.Module):
             temp_h[i_obs] = self.GRUCell(input, h[i_obs])
             last_t, h = temp_last_t, temp_h
 
-        if self.task == 'classification':
-            loss_ce, loss_acc, loss_auc, loss_pr = self.compute_classfy_loss(pred_list, true_list)
 
         if return_path:
             return np.array(path['path_t']), torch.stack(path['path_p'])
         else:
-            if self.task == 'regression':
-                return loss_mse / total_M_obs, loss_mae / total_M_obs, loss_mape / total_M_obs
-            elif self.task == 'classification':
-                return loss_ce, loss_acc, loss_auc, loss_pr
+            return loss_mse / total_M_obs, loss_mae / total_M_obs, loss_mape / total_M_obs
 
+
+'''GRU'''
+class GRU(nn.Module):
+    def __init__(self, args, device):
+        super(GRU, self).__init__()
+
+        self.input_size = args.input_size
+        self.sub_series = args.sub_series
+        self.n_dim = args.n_dim
+        self.hidden_size = args.hidden_size
+        self.solver = args.solver
+        self.dropout = args.dropout
+        self.device = device
+
+        self.p_model = nn.Sequential(
+            torch.nn.Linear(self.hidden_size, self.hidden_size),
+            torch.nn.ReLU(),
+            torch.nn.Dropout(self.dropout),
+            torch.nn.Linear(self.hidden_size, self.input_size-1),
+        )
+
+        self.GRUCell = nn.GRUCell(self.input_size * self.sub_series, self.hidden_size)
+
+        self.apply(init_weights)
+
+    def reset_hidden(self) -> None:
+        for name, param in self.named_parameters():
+            if 'h_init' in name:
+                nn.init.xavier_uniform_(param.data)
+
+    def compute_loss(self, loss_mse, loss_mae, loss_mape, total_M_obs, X_obs, p_obs, M_obs):
+
+        X_obs, M_obs = X_obs[:, 1:], M_obs[:, 1:]
+        loss_mse = loss_mse + (torch.pow(X_obs - p_obs, 2) * M_obs).sum()
+        loss_mae = loss_mae + (torch.abs(X_obs - p_obs) * M_obs).sum()
+        loss_mape = loss_mape + (torch.abs(X_obs - p_obs)/(X_obs + 1e-8) * M_obs).sum()
+        total_M_obs = total_M_obs + M_obs.sum()
+
+        return loss_mse, loss_mae, loss_mape, total_M_obs
+
+
+    def forward(self, obs_times, event_pt, sample_idx, X, M, batch_idx, dt, return_path=False):
+
+        current_time = 0.0
+        loss_mse, loss_mae, loss_mape = torch.as_tensor(0.0), torch.as_tensor(0.0), torch.as_tensor(0.0)
+        pred_list, true_list = [], []
+
+        total_M_obs = 0
+
+        if return_path:
+            path = {}
+            path['path_t'] = []
+            path['path_p'] = []
+            path['path_y'] = []
+
+        h = torch.zeros([sample_idx.shape[0], self.hidden_size]).to(self.device)
+
+        # remember the last time of updating
+        last_t = torch.zeros(sample_idx.shape[0])
+
+        for i, obs_time in enumerate(obs_times):
+            current_time = obs_time
+            start = event_pt[i]
+            end = event_pt[i + 1]
+
+            X_obs = X[start:end, :]
+            M_obs = M[start:end, :]
+
+            i_obs = batch_idx[start:end].type(torch.LongTensor)
+
+            p = self.p_model(h)
+            if current_time > 0:
+                loss_mse, loss_mae, loss_mape, total_M_obs \
+                    = self.compute_loss(loss_mse, loss_mae, loss_mape, total_M_obs, X_obs[:, :, 0], p[i_obs], M_obs)
+
+            X_obs = X_obs.reshape(X_obs.shape[0], -1)
+
+            # update the last observation time and hidden state
+            temp_last_t, temp_h = last_t.clone(), h.clone()
+            temp_last_t[i_obs] = current_time
+            temp_h[i_obs] = self.GRUCell(X_obs, h[i_obs])
+            last_t, h = temp_last_t, temp_h
+
+
+        if return_path:
+            return np.array(path['path_t']), torch.stack(path['path_p'])
+        else:
+            return loss_mse / total_M_obs, loss_mae / total_M_obs, loss_mape / total_M_obs
 
 '''
 This part of code are mainly implemented according GRU-D
@@ -397,7 +406,6 @@ class GRU_D(nn.Module):
         self.n_dim = args.n_dim
         self.hidden_size = args.hidden_size
         self.dropout = args.dropout
-        self.task = args.task
         self.device = device
 
         # decay parameters
@@ -415,31 +423,6 @@ class GRU_D(nn.Module):
         self.gru_d = GRU_D_cell(self.input_size * self.sub_series, self.hidden_size)
         self.apply(init_weights)
 
-    def append_classify_res(self, pred_list, true_list, Y_obs, p_obs):
-        Y_obs = Y_obs[:, 1:]
-        index = [Y_obs != 0]
-        Y_loss, p_loss = Y_obs[index], p_obs[index]
-        pred_list.append(p_loss)
-        true_list.append(Y_loss)
-
-        return pred_list, true_list
-
-    def compute_classfy_loss(self, pred_list, true_list):
-        pred_list = torch.stack(list(chain(*pred_list)))
-        true_list = torch.stack(list(chain(*true_list)))
-
-        criteria = torch.nn.BCEWithLogitsLoss()
-        true_list = true_list * 0.5 + 0.5
-        loss_ce = criteria(pred_list, true_list)
-
-        sigmoid = nn.Sigmoid()
-        pred_list = sigmoid(pred_list)
-
-        loss_acc = utils.acc(true_list.cpu().detach().numpy(), pred_list.cpu().detach().numpy())
-        loss_auc, loss_pr = utils.auc_pr(true_list.cpu().detach().numpy(), pred_list.cpu().detach().numpy())
-
-        return loss_ce, loss_acc, loss_auc, loss_pr
-
     def compute_loss(self, loss_mse, loss_mae, loss_mape, total_M_obs, X_obs, p_obs, M_obs):
 
         X_obs, M_obs = X_obs[:, 1:], M_obs[:, 1:]
@@ -450,10 +433,10 @@ class GRU_D(nn.Module):
 
         return loss_mse, loss_mae, loss_mape, total_M_obs
 
-    def forward(self, obs_times, event_pt, sample_idx, X, M, batch_idx, dt, Y=None, return_path=False):
+    def forward(self, obs_times, event_pt, sample_idx, X, M, batch_idx, dt, return_path=False):
         current_time = 0.0
         loss_mse, loss_mae, loss_mape = torch.as_tensor(0.0), torch.as_tensor(0.0), torch.as_tensor(0.0)
-        pred_list, true_list = [], []
+
         total_M_obs = 0
 
         if return_path:
@@ -481,12 +464,8 @@ class GRU_D(nn.Module):
             # compute loss
             p = self.p_model(h)
             if current_time > 0:
-                if self.task == 'regression':
-                    loss_mse, loss_mae, loss_mape, total_M_obs \
-                        = self.compute_reg_loss(loss_mse, loss_mae, loss_mape, total_M_obs, X_obs[:, :, 0], p[i_obs], M_obs)
-                elif self.task == 'classification':
-                    Y_obs = Y[start:end]
-                    pred_list, true_list = self.append_classify_res(pred_list, true_list, Y_obs, p[i_obs])
+                loss_mse, loss_mae, loss_mape, total_M_obs \
+                    = self.compute_loss(loss_mse, loss_mae, loss_mape, total_M_obs, X_obs[:, :, 0], p[i_obs], M_obs)
 
             X_obs = X_obs.reshape(X_obs.shape[0], -1)
             M_obs = torch.repeat_interleave(M_obs, 2, dim=1)
@@ -509,17 +488,12 @@ class GRU_D(nn.Module):
             temp[i_obs] = self.gru_d(h[i_obs], X_hat, M_obs, gamma_h[i_obs])
             h = temp
 
-        if self.task == 'classification':
-            loss_ce, loss_acc, loss_auc, loss_pr = self.compute_classfy_loss(pred_list, true_list)
-
 
         if return_path:
             return np.array(path['path_t']), torch.stack(path['path_p'])
         else:
-            if self.task == 'regression':
-                return loss_mse / total_M_obs, loss_mae / total_M_obs, loss_mape / total_M_obs
-            elif self.task == 'classification':
-                return loss_ce, loss_acc, loss_auc, loss_pr
+            return loss_mse / total_M_obs, loss_mae / total_M_obs, loss_mape / total_M_obs
+
 
 
 
@@ -538,7 +512,8 @@ class ODEFunc(nn.Module):
             nn.Linear(self.hidden_size, self.hidden_size),
             nn.Tanh(),
             nn.Linear(self.hidden_size, self.hidden_size),
-            nn.Tanh()
+            nn.Tanh(),
+            nn.Linear(self.hidden_size, self.hidden_size),
         )
 
     def forward(self, t, h):
@@ -575,7 +550,6 @@ class ODELSTM(nn.Module):
         self.cell_size = args.hidden_size
         self.solver = args.solver
         self.dropout = args.dropout
-        self.task = args.task
         self.device = device
 
         self.p_model = nn.Sequential(
@@ -600,35 +574,10 @@ class ODELSTM(nn.Module):
 
         return loss_mse, loss_mae, loss_mape, total_M_obs
 
-    def append_classify_res(self, pred_list, true_list, Y_obs, p_obs):
-        Y_obs = Y_obs[:, 1:]
-        index = [Y_obs != 0]
-        Y_loss, p_loss = Y_obs[index], p_obs[index]
-        pred_list.append(p_loss)
-        true_list.append(Y_loss)
-
-        return pred_list, true_list
-
-    def compute_classfy_loss(self, pred_list, true_list):
-        pred_list = torch.stack(list(chain(*pred_list)))
-        true_list = torch.stack(list(chain(*true_list)))
-
-        criteria = torch.nn.BCEWithLogitsLoss()
-        true_list = true_list * 0.5 + 0.5
-        loss_ce = criteria(pred_list, true_list)
-
-        sigmoid = nn.Sigmoid()
-        pred_list = sigmoid(pred_list)
-
-        loss_acc = utils.acc(true_list.cpu().detach().numpy(), pred_list.cpu().detach().numpy())
-        loss_auc, loss_pr = utils.auc_pr(true_list.cpu().detach().numpy(), pred_list.cpu().detach().numpy())
-
-        return loss_ce, loss_acc, loss_auc, loss_pr
-
-    def forward(self, obs_times, event_pt, sample_idx, X, M, batch_idx, dt, Y=None, return_path=False):
+    def forward(self, obs_times, event_pt, sample_idx, X, M, batch_idx, dt, return_path=False):
         current_time = 0.0
         loss_mse, loss_mae, loss_mape = torch.as_tensor(0.0), torch.as_tensor(0.0), torch.as_tensor(0.0)
-        pred_list, true_list = [], []
+
         total_M_obs = 0
 
         if return_path:
@@ -655,12 +604,9 @@ class ODELSTM(nn.Module):
 
             p = self.p_model(h)
             if current_time > 0:
-                if self.task == 'regression':
-                    loss_mse, loss_mae, loss_mape, total_M_obs \
-                        = self.compute_reg_loss(loss_mse, loss_mae, loss_mape, total_M_obs, X_obs[:, :, 0], p[i_obs], M_obs)
-                elif self.task == 'classification':
-                    Y_obs = Y[start:end]
-                    pred_list, true_list = self.append_classify_res(pred_list, true_list, Y_obs, p[i_obs])
+                loss_mse, loss_mae, loss_mape, total_M_obs \
+                    = self.compute_loss(loss_mse, loss_mae, loss_mape, total_M_obs, X_obs[:, :, 0], p[i_obs], M_obs)
+
 
             X_obs = X_obs.reshape(X_obs.shape[0], -1)
             temp_c, temp_h = c.clone(), h.clone()
@@ -668,16 +614,10 @@ class ODELSTM(nn.Module):
             temp_h[i_obs], temp_c[i_obs] = self.odelstm(X_obs, h[i_obs], c[i_obs], dt, self.solver, update=True)
             c, h = temp_c, temp_h
 
-        if self.task == 'classification':
-            loss_ce, loss_acc, loss_auc, loss_pr = self.compute_classfy_loss(pred_list, true_list)
-
         if return_path:
             return np.array(path['path_t']), torch.stack(path['path_p'])
         else:
-            if self.task == 'regression':
-                return loss_mse / total_M_obs, loss_mae / total_M_obs, loss_mape / total_M_obs
-            elif self.task == 'classification':
-                return loss_ce, loss_acc, loss_auc, loss_pr
+            return loss_mse / total_M_obs, loss_mae / total_M_obs, loss_mape / total_M_obs
 
 
 '''
@@ -715,7 +655,6 @@ class ODERNN(nn.Module):
         self.hidden_size = args.hidden_size
         self.solver = args.solver
         self.dropout = args.dropout
-        self.task = args.task
         self.device = device
 
         self.p_model = nn.Sequential(
@@ -740,35 +679,10 @@ class ODERNN(nn.Module):
 
         return loss_mse, loss_mae, loss_mape, total_M_obs
 
-    def append_classify_res(self, pred_list, true_list, Y_obs, p_obs):
-        Y_obs = Y_obs[:, 1:]
-        index = [Y_obs != 0]
-        Y_loss, p_loss = Y_obs[index], p_obs[index]
-        pred_list.append(p_loss)
-        true_list.append(Y_loss)
-
-        return pred_list, true_list
-
-    def compute_classfy_loss(self, pred_list, true_list):
-        pred_list = torch.stack(list(chain(*pred_list)))
-        true_list = torch.stack(list(chain(*true_list)))
-
-        criteria = torch.nn.BCEWithLogitsLoss()
-        true_list = true_list * 0.5 + 0.5
-        loss_ce = criteria(pred_list, true_list)
-
-        sigmoid = nn.Sigmoid()
-        pred_list = sigmoid(pred_list)
-
-        loss_acc = utils.acc(true_list.cpu().detach().numpy(), pred_list.cpu().detach().numpy())
-        loss_auc, loss_pr = utils.auc_pr(true_list.cpu().detach().numpy(), pred_list.cpu().detach().numpy())
-
-        return loss_ce, loss_acc, loss_auc, loss_pr
-
-    def forward(self, obs_times, event_pt, sample_idx, X, M, batch_idx, dt, Y=None, return_path=False):
+    def forward(self, obs_times, event_pt, sample_idx, X, M, batch_idx, dt, return_path=False):
         current_time = 0.0
         loss_mse, loss_mae, loss_mape = torch.as_tensor(0.0), torch.as_tensor(0.0), torch.as_tensor(0.0)
-        pred_list, true_list = [], []
+
         total_M_obs = 0
 
         if return_path:
@@ -794,12 +708,9 @@ class ODERNN(nn.Module):
 
             p = self.p_model(h)
             if current_time > 0:
-                if self.task == 'regression':
-                    loss_mse, loss_mae, loss_mape, total_M_obs \
-                        = self.compute_reg_loss(loss_mse, loss_mae, loss_mape, total_M_obs, X_obs[:, :, 0], p[i_obs], M_obs)
-                elif self.task == 'classification':
-                    Y_obs = Y[start:end]
-                    pred_list, true_list = self.append_classify_res(pred_list, true_list, Y_obs, p[i_obs])
+                loss_mse, loss_mae, loss_mape, total_M_obs \
+                    = self.compute_loss(loss_mse, loss_mae, loss_mape, total_M_obs, X_obs[:, :, 0], p[i_obs], M_obs)
+
 
             X_obs = X_obs.reshape(X_obs.shape[0], -1)
             temp_h = h.clone()
@@ -807,16 +718,11 @@ class ODERNN(nn.Module):
             temp_h[i_obs] = self.odernn(X_obs, h[i_obs], dt, self.solver, update=True)
             h = temp_h
 
-        if self.task == 'classification':
-            loss_ce, loss_acc, loss_auc, loss_pr = self.compute_classfy_loss(pred_list, true_list)
-
         if return_path:
             return np.array(path['path_t']), torch.stack(path['path_p'])
         else:
-            if self.task == 'regression':
-                return loss_mse / total_M_obs, loss_mae / total_M_obs, loss_mape / total_M_obs
-            elif self.task == 'classification':
-                return loss_ce, loss_acc, loss_auc, loss_pr
+            return loss_mse / total_M_obs, loss_mae / total_M_obs, loss_mape / total_M_obs
+
 
 
 '''
@@ -854,36 +760,29 @@ class FinalTanh(nn.Module):
 
 
 class Neural_CDE(nn.Module):
-    def __init__(self, NCDE_params):
+    def __init__(self, args, device):
         super(Neural_CDE, self).__init__()
 
-        self.hidden_size = NCDE_params['hidden_size']
-        self.input_size = NCDE_params['input_size'] + 1
-        self.bias = NCDE_params['bias']
-        self.solver = NCDE_params['solver']
-        self.num_class = NCDE_params['num_class']
-        self.dropout = NCDE_params['dropout']
+        self.input_size = args.input_size * args.sub_series + 1
+        self.sub_series = args.sub_series
+        self.n_dim = args.n_dim
+        self.hidden_size = args.hidden_size
+        self.solver = args.solver
+        self.dropout = args.dropout
+        self.device = device
 
         self.initial = torch.nn.Linear(self.input_size, self.hidden_size)
 
-        self.ncde = FinalTanh(self.input_size, self.hidden_size, hidden_hidden_size=150, num_hidden_layers=4)
+        self.ncde = FinalTanh(self.input_size, self.hidden_size, hidden_hidden_size=50, num_hidden_layers=3)
 
         # mapping function from hidden state to real data
         self.p_model = nn.Sequential(
-            torch.nn.Linear(self.hidden_size, self.hidden_size, bias=self.bias),
+            torch.nn.Linear(self.hidden_size, self.hidden_size),
             torch.nn.ReLU(),
             torch.nn.Dropout(self.dropout),
-            torch.nn.Linear(self.hidden_size, self.input_size, bias=self.bias),
+            torch.nn.Linear(self.hidden_size, args.input_size-1),
         )
 
-        if self.num_class != None:
-            # classification net
-            self.classify = nn.Sequential(
-                torch.nn.Linear(self.hidden_size, self.hidden_size, bias=self.bias),
-                torch.nn.ReLU(),
-                torch.nn.Dropout(self.dropout),
-                torch.nn.Linear(self.hidden_size, self.num_class, bias=self.bias),
-            )
         self.apply(self.init_weights)
 
     def init_weights(self, m):
@@ -892,64 +791,50 @@ class Neural_CDE(nn.Module):
             if m.bias is not None:
                 m.bias.data.fill_(0.01)
 
-    def forward(self, obs_times, event_pt, sample_idx, X, M, batch_coeffs, batch_idx, device, T=None, return_path=False,
-                classify=False, class_per_time=False, target=None, prop_to_end=True, loss_mae=True, dt=0.05):
+    def compute_loss(self, loss_mse, loss_mae, loss_mape, total_M_obs, X_obs, p_obs, M_obs):
+
+        X_obs, M_obs = X_obs[:, 1:], M_obs[:, 1:]
+        loss_mse = loss_mse + (torch.pow(X_obs - p_obs, 2) * M_obs).sum()
+        loss_mae = loss_mae + (torch.abs(X_obs - p_obs) * M_obs).sum()
+        loss_mape = loss_mape + (torch.abs(X_obs - p_obs)/(X_obs + 1e-8) * M_obs).sum()
+        total_M_obs = total_M_obs + M_obs.sum()
+
+        return loss_mse, loss_mae, loss_mape, total_M_obs
+
+    def forward(self, obs_times, event_pt, sample_idx, X, M, batch_coeffs, batch_idx, dt, return_path=False):
 
         current_time = 0
-        loss = torch.as_tensor(0.0)
-        loss_CE = torch.as_tensor(0.0)
+        loss_mse, loss_mae, loss_mape = torch.as_tensor(0.0), torch.as_tensor(0.0), torch.as_tensor(0.0)
         total_M_obs = 0
 
-        if class_per_time:
-            if return_path:
-                path = {}
-                path['path_t'] = []
-                path['path_p'] = []
-                path['path_y'] = []
-        else:
-            if return_path:
-                path = {}
-                path['path_t'] = []
-                path['path_p'] = []
+        if return_path:
+            path = {}
+            path['path_t'] = []
+            path['path_p'] = []
 
         '''interpolate the observations using rectilinear method for online prediction'''
-        X_path = torchcde.CubicSpline(batch_coeffs)
+        X_path = torchcde.LinearInterpolation(batch_coeffs)
         X0 = X_path.evaluate(X_path.interval[0])
         h0 = self.initial(X0)
 
-        ht = torchcde.cdeint(X=X_path, func=self.ncde, z0=h0, t=torch.FloatTensor(obs_times).to(device),
+        ht = torchcde.cdeint(X=X_path, func=self.ncde, z0=h0, t=torch.FloatTensor(obs_times).to(self.device),
                             backend='torchdiffeq', method=self.solver, adjoint=True, options={'step_size': dt})
 
         for i, obs_time in enumerate(obs_times):
             start = event_pt[i]
             end = event_pt[i + 1]
 
-            if target is not None:
-                target_obs = target[start:end]
+            X_obs = X[start:end, :]
+            M_obs = M[start:end, :]
             i_obs = batch_idx[start:end].type(torch.LongTensor)
 
-            if class_per_time:
-                pred_prob = self.classify(ht[:, i, :])
-                loss_CE_per_time = torch.nn.CrossEntropyLoss()(pred_prob[i_obs], target_obs.long()).sum()
-                loss_CE = loss_CE + loss_CE_per_time
-
-                if return_path:
-                    path['path_t'].append(current_time)
-                    path['path_p'].append(pred_prob[i_obs])
-                    path['path_y'].append(target_obs)
-
-        if classify:
-            pred_prob = self.classify(ht[:, -1, :])
-            loss_CE = utils.cross_entropy(pred_prob, target)
-            acc = utils.sum_accuracy(torch.argmax(pred_prob, dim=1).to(device), target.to(device))
+            p = self.p_model(ht[:, i, :])
+            if current_time > 0:
+                loss_mse, loss_mae, loss_mape, total_M_obs \
+                    = self.compute_loss(loss_mse, loss_mae, loss_mape, total_M_obs, X_obs[:, :, 0], p[i_obs], M_obs)
+            current_time = current_time + dt
 
         if return_path:
-            if classify:
-                return pred_prob
-            elif class_per_time:
-                return np.array(path['path_t']), torch.cat(path['path_p']), torch.cat(path['path_y'])
+            return np.array(path['path_t']), torch.stack(path['path_p'])
         else:
-            if classify:
-                return pred_prob
-            elif class_per_time:
-                return loss_CE
+            return loss_mse / total_M_obs, loss_mae / total_M_obs, loss_mape / total_M_obs

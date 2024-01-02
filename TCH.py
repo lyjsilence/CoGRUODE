@@ -36,7 +36,6 @@ parser.add_argument('--lr', type=float, default=0.003, help='The learning rate w
 parser.add_argument('--batch_size', type=int, default=128, help='The batch size when training NN')
 
 parser.add_argument('--input_size', type=int, default=16, help='Input size')
-parser.add_argument('--hidden_size', type=int, default=113, help='Input size')
 parser.add_argument('--sub_series', type=int, default=2)
 parser.add_argument('--n_dim', type=int, default=5, help='Dimension of marginal memory for one variable')
 parser.add_argument('--dropout', type=float, default=0.5)
@@ -66,10 +65,9 @@ if __name__ == '__main__':
     train_idx, val_idx = train_test_split(data_idx, train_size=0.7, random_state=42)
     val_idx, test_idx = train_test_split(val_idx, train_size=0.5, random_state=42)
 
-
-    train_data = utils.option_dataset(data[data['idx'].isin(train_idx)])
-    val_data = utils.option_dataset(data[data['idx'].isin(val_idx)])
-    test_data = utils.option_dataset(data[data['idx'].isin(test_idx)])
+    train_data = utils.option_dataset(args, data[data['idx'].isin(train_idx)])
+    val_data = utils.option_dataset(args, data[data['idx'].isin(val_idx)])
+    test_data = utils.option_dataset(args, data[data['idx'].isin(test_idx)])
     collate_fn = utils.option_collate_fn
 
     dl_train = DataLoader(dataset=train_data, collate_fn=utils.option_collate_fn,
@@ -83,6 +81,9 @@ if __name__ == '__main__':
         model_name = args.model_name
         if model_name == 'CoGRUODE':
             model = CoGRUODE(args, device).to(device)
+        elif model_name == 'Neural-CDE':
+            args.hidden_size = 50
+            model = Neural_CDE(args, device).to(device)
         elif model_name == 'GRUODE':
             args.minimal = False
             args.hidden_size = 105
@@ -92,10 +93,10 @@ if __name__ == '__main__':
             args.hidden_size = 113
             model = GRU_ODE(args, device).to(device)
         elif model_name == 'ODELSTM':
-            args.hidden_size = 103
+            args.hidden_size = 97
             model = ODELSTM(args, device).to(device)
         elif model_name == 'ODERNN':
-            args.hidden_size = 113
+            args.hidden_size = 105
             model = ODERNN(args, device).to(device)
         elif model_name == 'GRU-D':
             args.hidden_size = 122
@@ -109,4 +110,3 @@ if __name__ == '__main__':
         print(f'Training model: {model_name}, Experiment: {exp_id}, '
               f'Num of training parameters: {sum(p.numel() for p in model.parameters())}')
         Trainer(model, dl_train, dl_val, dl_test, args, device, exp_id)
-

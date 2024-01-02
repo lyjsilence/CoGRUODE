@@ -36,7 +36,11 @@ def Trainer(model, dl_train, dl_val, dl_test, args, device, exp_id):
             X = batch_ts["X"].to(device)
             M = batch_ts["M"].to(device)
 
-            loss_mse, loss_mae, loss_mape = model(obs_times, event_pt, sample_idx, X, M, batch_idx, dt=args.dt)
+            if args.model_name == 'Neural-CDE':
+                batch_coeffs = batch_ts["batch_coeffs"].to(device)
+                loss_mse, loss_mae, loss_mape = model(obs_times, event_pt, sample_idx, X, M, batch_coeffs, batch_idx, dt=args.dt)
+            else:
+                loss_mse, loss_mae, loss_mape = model(obs_times, event_pt, sample_idx, X, M, batch_idx, dt=args.dt)
             loss = loss_mse
 
             training_mse_loss.append(loss_mse.detach().cpu().numpy())
@@ -60,7 +64,6 @@ def Trainer(model, dl_train, dl_val, dl_test, args, device, exp_id):
 
 
         '''Modeling val'''
-
         with torch.no_grad():
             model.eval()
             val_mse_loss, val_mae_loss, val_mape_loss = [], [], []
@@ -73,7 +76,14 @@ def Trainer(model, dl_train, dl_val, dl_test, args, device, exp_id):
                 X = batch_ts_val["X"].to(device)
                 M = batch_ts_val["M"].to(device)
 
-                val_loss_mse, val_loss_mae, val_loss_mape = model(obs_times, event_pt, sample_idx, X, M, batch_idx, dt=args.dt)
+                if args.model_name == 'Neural-CDE':
+                    batch_coeffs = batch_ts_val["batch_coeffs"].to(device)
+                    val_loss_mse, val_loss_mae, val_loss_mape \
+                        = model(obs_times, event_pt, sample_idx, X, M, batch_coeffs, batch_idx, dt=args.dt)
+                else:
+                    val_loss_mse, val_loss_mae, val_loss_mape \
+                        = model(obs_times, event_pt, sample_idx, X, M, batch_idx, dt=args.dt)
+
                 val_mse_loss.append(val_loss_mse.detach().cpu().numpy())
                 val_mae_loss.append(val_loss_mae.detach().cpu().numpy())
                 val_mape_loss.append(val_loss_mape.detach().cpu().numpy())
@@ -115,7 +125,14 @@ def Trainer(model, dl_train, dl_val, dl_test, args, device, exp_id):
             M = batch_ts_test["M"].to(device)
 
             # run the model for test
-            test_loss_mse, test_loss_mae, test_loss_mape = model(obs_times, event_pt, sample_idx, X, M, batch_idx, dt=args.dt)
+            if args.model_name == 'Neural-CDE':
+                batch_coeffs = batch_ts_test["batch_coeffs"].to(device)
+                test_loss_mse, test_loss_mae, test_loss_mape \
+                    = model(obs_times, event_pt, sample_idx, X, M, batch_coeffs, batch_idx, dt=args.dt)
+            else:
+                test_loss_mse, test_loss_mae, test_loss_mape \
+                    = model(obs_times, event_pt, sample_idx, X, M, batch_idx, dt=args.dt)
+
             test_mse_loss.append(test_loss_mse.detach().cpu().numpy())
             test_mae_loss.append(test_loss_mae.detach().cpu().numpy())
             test_mape_loss.append(test_loss_mape.detach().cpu().numpy())
